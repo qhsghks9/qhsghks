@@ -1,0 +1,486 @@
+{
+  "name": "AI 도입 사례 주간 리서치",
+  "nodes": [
+    {
+      "id": "n01",
+      "name": "Weekly Schedule (Mon 08:47 KST)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "weeksInterval": 1,
+              "triggerAtDay": [
+                1
+              ],
+              "triggerAtHour": 8,
+              "triggerAtMinute": 47
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "n02",
+      "name": "Manual Test Run",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        200
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "n03",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        220,
+        100
+      ],
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": false,
+        "options": {},
+        "assignments": {
+          "assignments": [
+            {
+              "id": "c01",
+              "name": "recipient",
+              "value": "YOUR_EMAIL@example.com",
+              "type": "string"
+            },
+            {
+              "id": "c02",
+              "name": "sheetId",
+              "value": "YOUR_GOOGLE_SHEET_ID",
+              "type": "string"
+            },
+            {
+              "id": "c03",
+              "name": "sheetName",
+              "value": "AI_Cases",
+              "type": "string"
+            },
+            {
+              "id": "c04",
+              "name": "model",
+              "value": "claude-opus-5-5",
+              "type": "string"
+            },
+            {
+              "id": "c05",
+              "name": "effort",
+              "value": "high",
+              "type": "string"
+            },
+            {
+              "id": "c06",
+              "name": "targetCases",
+              "value": 15,
+              "type": "number"
+            },
+            {
+              "id": "c07",
+              "name": "regions",
+              "value": "한국, 미국, 유럽, 일본, 중국 등 글로벌",
+              "type": "string"
+            },
+            {
+              "id": "c08",
+              "name": "focusIndustries",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "c09",
+              "name": "maxSearches",
+              "value": 25,
+              "type": "number"
+            },
+            {
+              "id": "c10",
+              "name": "maxFetches",
+              "value": 15,
+              "type": "number"
+            },
+            {
+              "id": "c11",
+              "name": "maxContinuations",
+              "value": 6,
+              "type": "number"
+            },
+            {
+              "id": "c12",
+              "name": "dedupContextLimit",
+              "value": 300,
+              "type": "number"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "n04",
+      "name": "Read Existing DB",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        440,
+        100
+      ],
+      "alwaysOutputData": true,
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('Config').first().json.sheetId }}"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "={{ $('Config').first().json.sheetName }}"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "n05",
+      "name": "Build Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        100
+      ],
+      "parameters": {
+        "jsCode": "// 설정값과 기존 DB를 읽어 Claude 요청 본문을 만든다.\nconst cfg = $('Config').first().json;\nconst tz = 'Asia/Seoul';\nconst today = $now.setZone(tz).startOf('day');\nconst from = today.minus({ days: 7 });\nconst fmt = (d) => d.toFormat('yyyy-MM-dd');\n\n// 기존 DB(구글 시트)에서 중복 체크용 목록을 만든다. 시트가 비어 있으면 빈 item 1개가 들어온다.\nconst existing = $('Read Existing DB').all()\n  .map((i) => i.json)\n  .filter((r) => r['기업명']);\nconst recent = existing.slice(-Number(cfg.dedupContextLimit || 300));\nconst existingList = recent.length\n  ? recent.map((r) => `- ${r['기업명']} | ${String(r['적용내용'] || '').slice(0, 60)} | ${r['출처링크'] || ''}`).join('\\n')\n  : '(없음 — 첫 수집)';\n\nconst system = `당신은 AI 컨설팅 회사의 리서치 애널리스트입니다. 컨설턴트가 고객 미팅에서 바로 인용할 수 있도록, 실제 기업의 AI 도입 사례를 검증된 출처 기반으로 수집·정리합니다.\n\n## 수집 원칙\n1. 기간: 발표일(원문 게재일)이 수집 기간 안에 있는 사례만 포함합니다. 날짜를 확인할 수 없으면 제외합니다.\n2. 우선순위: 실제 도입 효과(비용 절감률, 처리 시간 단축, 매출·전환율 증가, 정확도 향상 등 정량 수치)가 드러난 사례를 최우선으로 합니다. 단순 기술·제품 출시 소개, 파일럿 계획 발표, MOU는 제외합니다.\n3. 제외 대상:\n   - 출처가 불분명하거나 원문을 확인할 수 없는 기사(재인용 블로그, 출처 미기재 기사, 콘텐츠 팜)\n   - 홍보성이 강한 기사(벤더 보도자료를 그대로 옮긴 기사, 고객사 실명·구체 수치 없이 자사 솔루션만 홍보하는 글)\n   - 아래 \"기존 수집 사례\"와 같은 기업의 같은 도입 건(출처만 다른 재보도 포함)\n4. 성과 수치: 원문에 명시된 수치만 그대로 적습니다(단위·기간·비교 기준 포함). 원문에 없는 내용을 계산하거나 추론했다면 반드시 \"추정: \"으로 시작하고 metrics_basis를 \"추정\"으로 둡니다. 수치가 없으면 metrics를 \"원문 수치 없음\", metrics_basis를 \"없음\"으로 둡니다. 수치를 지어내지 마십시오.\n5. 검증: 핵심 수치와 발표일은 가능하면 원문(기업 공식 발표, IR, 공시, 언론 원문)을 web_fetch로 직접 열어 확인합니다. 1차 출처 링크를 우선 기재합니다.\n\n## 분류 기준\n- 산업군(industry): 제조, 금융, 유통·소비재, 헬스케어·제약, 통신·IT, 에너지·화학, 물류·운송, 건설·부동산, 공공·교육, 미디어·엔터테인먼트·레저, 기타 중 하나\n- 업무 영역(function): 영업, 마케팅, HR, 재무, 생산, 고객지원, R&D, IT·운영, 공급망·물류, 법무·컴플라이언스, 전략·기획, 기타 중 하나(복수면 가장 핵심 하나)\n- 신뢰도(reliability):\n  - 상: 기업 공식 발표·IR·공시 또는 주요 언론의 취재 기사이며, 고객사 실명과 정량 수치의 출처가 명확함\n  - 중: 신뢰할 만한 언론·업계지 또는 벤더 고객사례이나 고객사 실명이 명시되어 있음. 수치 일부가 2차 인용\n  - 하: 벤더 단독 발표 등 수치의 독립 검증이 어려움(홍보성이 강하면 아예 제외)\n\n## 출력 형식\n리서치가 끝나면 설명 없이 아래 JSON 하나만 <result_json></result_json> 태그 안에 출력합니다. 모든 값은 한국어로 씁니다(기업명·기술명 고유명사는 원어 병기 가능).\n<result_json>\n{\n  \"period\": {\"from\": \"YYYY-MM-DD\", \"to\": \"YYYY-MM-DD\"},\n  \"top3\": [\n    {\"case_id\": \"C1\", \"headline\": \"한 줄 제목\", \"why_notable\": \"고객 미팅에서 인용할 포인트 2~3문장\"}\n  ],\n  \"cases\": [\n    {\n      \"case_id\": \"C1\",\n      \"industry\": \"산업군\",\n      \"function\": \"업무 영역\",\n      \"company\": \"기업명\",\n      \"country\": \"국가\",\n      \"application\": \"적용 내용(무엇을, 어떤 업무에, 어느 규모로 적용했는지 1~2문장)\",\n      \"technology\": \"사용 기술(예: 생성형 AI(GPT-4o 기반 RAG), 컴퓨터 비전, 수요예측 ML)\",\n      \"metrics\": \"정량 성과(원문 수치 그대로, 여러 개면 '; '로 구분)\",\n      \"metrics_basis\": \"원문 | 추정 | 없음\",\n      \"source_name\": \"출처 매체/기관명\",\n      \"source_url\": \"https://...\",\n      \"published_date\": \"YYYY-MM-DD\",\n      \"reliability\": \"상 | 중 | 하\",\n      \"reliability_reason\": \"신뢰도 판단 근거 한 문장\"\n    }\n  ],\n  \"excluded\": [\n    {\"title\": \"제외한 기사/사례\", \"reason\": \"출처 불분명 | 홍보성 | 중복 | 기간 외 | 성과 불명확\"}\n  ]\n}\n</result_json>`;\n\nconst user = `수집 기간: ${fmt(from)} ~ ${fmt(today)} (최근 7일, KST)\n목표 건수: ${cfg.targetCases}건 내외 (품질 기준을 통과한 사례만. 부족하면 적게 내도 됩니다)\n우선 지역: ${cfg.regions}\n관심 산업군(있으면 우선): ${cfg.focusIndustries || '전 산업'}\n\n위 기간에 새로 공개된 기업의 AI 도입 사례를 웹에서 리서치해 주세요. 국내·해외 기사를 모두 찾고, 한국어·영어 검색어를 모두 사용하세요(예: \"AI 도입 효과 절감\", \"생성형 AI 도입 성과\", \"AI deployment results percent\", \"generative AI case study reduced\").\n\ntop3에는 이번 주 사례 중 정량 성과가 뚜렷하고 신뢰도가 높아 고객 제안에 가장 인용 가치가 높은 3건을 고르세요.\n\n## 기존 수집 사례 (중복 제외용)\n${existingList}`;\n\nconst body = {\n  model: cfg.model,\n  max_tokens: 32000,\n  thinking: { type: 'adaptive' },\n  output_config: { effort: cfg.effort },\n  fallbacks: 'default',\n  system,\n  tools: [\n    { type: 'web_search_20260209', name: 'web_search', max_uses: Number(cfg.maxSearches) },\n    { type: 'web_fetch_20260209', name: 'web_fetch', max_uses: Number(cfg.maxFetches) },\n  ],\n  messages: [{ role: 'user', content: user }],\n};\n\nreturn [{ json: { body, iteration: 0, period: { from: fmt(from), to: fmt(today) } } }];\n"
+      }
+    },
+    {
+      "id": "n06",
+      "name": "Request State",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        880,
+        100
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "n07",
+      "name": "Claude Research (web search)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        100
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "anthropic-beta",
+              "value": "server-side-fallback-2026-07-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "timeout": 600000
+        }
+      }
+    },
+    {
+      "id": "n08",
+      "name": "Check Continuation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        100
+      ],
+      "parameters": {
+        "jsCode": "// 서버측 web_search 루프가 한도에 걸리면 stop_reason=pause_turn 으로 끝난다.\n// 이때 assistant 응답을 붙여 같은 요청을 다시 보내면 이어서 진행된다(\"계속\" 같은 메시지는 넣지 않는다).\nconst res = $input.first().json;\nconst state = $('Request State').first(0, $runIndex).json;\nconst maxContinuations = Number($('Config').first().json.maxContinuations || 5);\n\nif (res.type === 'error' || res.error) {\n  throw new Error(`Claude API 오류: ${JSON.stringify(res.error || res)}`);\n}\n\nif (res.stop_reason === 'pause_turn') {\n  if (state.iteration >= maxContinuations) {\n    throw new Error(`pause_turn 이 ${maxContinuations}회를 넘었습니다. Config 의 maxContinuations 를 늘리거나 검색 범위를 줄이세요.`);\n  }\n  const body = {\n    ...state.body,\n    messages: [...state.body.messages, { role: 'assistant', content: res.content }],\n  };\n  return [{ json: { done: false, body, iteration: state.iteration + 1, period: state.period } }];\n}\n\nif (res.stop_reason === 'refusal') {\n  throw new Error(`모델이 요청을 거절했습니다: ${JSON.stringify(res.stop_details)}`);\n}\nif (res.stop_reason === 'max_tokens') {\n  throw new Error('응답이 max_tokens 에서 잘렸습니다. targetCases 를 줄이거나 max_tokens 를 늘리세요.');\n}\n\nreturn [{ json: { done: true, finalResponse: res, iteration: state.iteration, period: state.period } }];\n"
+      }
+    },
+    {
+      "id": "n09",
+      "name": "Needs Continuation?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1540,
+        100
+      ],
+      "parameters": {
+        "options": {},
+        "conditions": {
+          "combinator": "and",
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "k01",
+              "leftValue": "={{ $json.done }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "false",
+                "singleValue": true
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "n10",
+      "name": "Parse & Build Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// 최종 응답에서 JSON을 꺼내 검증·중복 제거하고, 시트 행과 HTML 리포트를 만든다.\nconst cfg = $('Config').first().json;\nconst { finalResponse, period } = $input.first().json;\n\nconst text = (finalResponse.content || [])\n  .filter((b) => b.type === 'text')\n  .map((b) => b.text)\n  .join('');\nconst m = text.match(/<result_json>([\\s\\S]*?)<\\/result_json>/) || text.match(/```json\\s*([\\s\\S]*?)```/);\nif (!m) throw new Error('응답에서 <result_json> 블록을 찾지 못했습니다:\\n' + text.slice(0, 2000));\nlet data;\ntry {\n  data = JSON.parse(m[1].trim());\n} catch (e) {\n  throw new Error('결과 JSON 파싱 실패: ' + e.message + '\\n' + m[1].slice(0, 2000));\n}\n\nconst normUrl = (u) => String(u || '').trim().toLowerCase()\n  .replace(/^https?:\\/\\//, '').replace(/^www\\./, '')\n  .replace(/[?#].*$/, '').replace(/\\/+$/, '');\nconst normCo = (s) => String(s || '').toLowerCase().replace(/[\\s().,㈜]|주식회사|inc|corp|co\\b|ltd/g, '');\n\n// 기존 DB 와의 중복 체크(링크 동일 또는 같은 기업·같은 업무영역·같은 발표일)\nconst existing = $('Read Existing DB').all().map((i) => i.json).filter((r) => r['기업명']);\nconst seenUrl = new Set(existing.map((r) => normUrl(r['출처링크'])));\nconst seenKey = new Set(existing.map((r) => `${normCo(r['기업명'])}|${r['업무영역']}|${r['발표일']}`));\n\nconst inPeriod = (d) => /^\\d{4}-\\d{2}-\\d{2}$/.test(d) && d >= period.from && d <= period.to;\nconst dropped = [];\nconst cases = [];\nfor (const c of data.cases || []) {\n  const key = `${normCo(c.company)}|${c.function}|${c.published_date}`;\n  const u = normUrl(c.source_url);\n  if (!c.company || !/^https?:\\/\\//.test(c.source_url || '')) { dropped.push({ title: c.company, reason: '출처 링크 없음' }); continue; }\n  if (!inPeriod(c.published_date)) { dropped.push({ title: c.company, reason: `기간 외(${c.published_date})` }); continue; }\n  if (seenUrl.has(u) || seenKey.has(key)) { dropped.push({ title: c.company, reason: '기존 DB 중복' }); continue; }\n  if (!['상', '중', '하'].includes(c.reliability)) c.reliability = '하';\n  // 수치 근거 표기 보정: 추정이면 반드시 '추정' 표시\n  if (c.metrics_basis === '추정' && !/^추정/.test(c.metrics)) c.metrics = `추정: ${c.metrics}`;\n  if (!c.metrics) { c.metrics = '원문 수치 없음'; c.metrics_basis = '없음'; }\n  seenUrl.add(u); seenKey.add(key);\n  cases.push(c);\n}\n\n// 산업군별 정렬(정해진 순서 → 신뢰도 → 발표일 최신순)\nconst order = ['제조', '금융', '유통·소비재', '헬스케어·제약', '통신·IT', '에너지·화학', '물류·운송', '건설·부동산', '공공·교육', '미디어·엔터테인먼트·레저', '기타'];\nconst rel = { 상: 0, 중: 1, 하: 2 };\nconst idx = (i) => (order.indexOf(i) === -1 ? order.length : order.indexOf(i));\ncases.sort((a, b) => idx(a.industry) - idx(b.industry)\n  || rel[a.reliability] - rel[b.reliability]\n  || String(b.published_date).localeCompare(String(a.published_date)));\n\nconst ids = new Set(cases.map((c) => c.case_id));\nconst top3 = (data.top3 || []).filter((t) => ids.has(t.case_id)).slice(0, 3);\nconst topIds = new Set(top3.map((t) => t.case_id));\nconst byId = Object.fromEntries(cases.map((c) => [c.case_id, c]));\n\nconst collectedAt = $now.setZone('Asia/Seoul').toFormat('yyyy-MM-dd');\nconst rows = cases.map((c) => ({\n  수집일: collectedAt,\n  발표일: c.published_date,\n  산업군: c.industry,\n  업무영역: c.function,\n  기업명: c.company,\n  국가: c.country || '',\n  적용내용: c.application,\n  사용기술: c.technology,\n  정량성과: c.metrics,\n  성과근거: c.metrics_basis,\n  신뢰도: c.reliability,\n  신뢰도근거: c.reliability_reason || '',\n  출처명: c.source_name || '',\n  출처링크: c.source_url,\n  주목사례: topIds.has(c.case_id) ? 'Y' : '',\n}));\n\n// ---- HTML 리포트 ----\nconst esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;');\nconst th = 'style=\"background:#1f2937;color:#fff;padding:6px 8px;border:1px solid #d1d5db;font-size:12px;text-align:left;white-space:nowrap\"';\nconst td = 'style=\"padding:6px 8px;border:1px solid #d1d5db;font-size:12px;vertical-align:top\"';\nconst badge = { 상: '#16a34a', 중: '#d97706', 하: '#dc2626' };\n\nlet html = `<div style=\"font-family:'Malgun Gothic',Apple SD Gothic Neo,Arial,sans-serif;color:#111827;max-width:1100px\">`;\nhtml += `<h2 style=\"margin:0 0 4px\">AI 도입 사례 주간 리포트</h2>`;\nhtml += `<p style=\"margin:0 0 16px;color:#6b7280\">수집 기간 ${period.from} ~ ${period.to} · 신규 ${cases.length}건 · 제외 ${(data.excluded || []).length + dropped.length}건</p>`;\n\nhtml += `<h3 style=\"border-bottom:2px solid #1f2937;padding-bottom:4px\">이번 주 주목할 사례 3건</h3>`;\nif (!top3.length) html += `<p>이번 주는 기준을 충족한 주목 사례가 없습니다.</p>`;\ntop3.forEach((t, i) => {\n  const c = byId[t.case_id];\n  html += `<div style=\"margin:0 0 12px;padding:10px 12px;border-left:4px solid #2563eb;background:#f3f4f6\">\n<b>${i + 1}. ${esc(t.headline)}</b><br>\n<span style=\"color:#374151\">${esc(c.company)} · ${esc(c.industry)} / ${esc(c.function)} · 신뢰도 <b style=\"color:${badge[c.reliability]}\">${c.reliability}</b></span><br>\n<span>${esc(t.why_notable)}</span><br>\n<span style=\"color:#111827\"><b>성과:</b> ${esc(c.metrics)}</span> · <a href=\"${esc(c.source_url)}\">${esc(c.source_name || '원문')}</a> (${esc(c.published_date)})\n</div>`;\n});\n\nconst groups = {};\nfor (const c of cases) (groups[c.industry] ||= []).push(c);\nhtml += `<h3 style=\"border-bottom:2px solid #1f2937;padding-bottom:4px;margin-top:24px\">산업군별 사례</h3>`;\nif (!cases.length) html += `<p>이번 주 신규 사례가 없습니다.</p>`;\nfor (const [industry, list] of Object.entries(groups)) {\n  html += `<h4 style=\"margin:16px 0 6px\">${esc(industry)} (${list.length}건)</h4>`;\n  html += `<table style=\"border-collapse:collapse;width:100%\"><tr>\n<th ${th}>업무 영역</th><th ${th}>기업명</th><th ${th}>적용 내용</th><th ${th}>사용 기술</th><th ${th}>정량 성과</th><th ${th}>신뢰도</th><th ${th}>출처</th><th ${th}>발표일</th></tr>`;\n  for (const c of list) {\n    html += `<tr>\n<td ${td}>${esc(c.function)}</td>\n<td ${td}><b>${esc(c.company)}</b>${topIds.has(c.case_id) ? ' ★' : ''}<br><span style=\"color:#6b7280\">${esc(c.country || '')}</span></td>\n<td ${td}>${esc(c.application)}</td>\n<td ${td}>${esc(c.technology)}</td>\n<td ${td}>${esc(c.metrics)}${c.metrics_basis === '추정' ? ' <i style=\"color:#d97706\">(추정)</i>' : ''}</td>\n<td ${td}><b style=\"color:${badge[c.reliability]}\">${c.reliability}</b><br><span style=\"color:#6b7280\">${esc(c.reliability_reason || '')}</span></td>\n<td ${td}><a href=\"${esc(c.source_url)}\">${esc(c.source_name || '링크')}</a></td>\n<td ${td} nowrap>${esc(c.published_date)}</td></tr>`;\n  }\n  html += `</table>`;\n}\n\nconst excluded = [...(data.excluded || []), ...dropped];\nif (excluded.length) {\n  html += `<details style=\"margin-top:20px\"><summary style=\"cursor:pointer;color:#6b7280\">제외된 항목 ${excluded.length}건</summary><ul style=\"font-size:12px;color:#6b7280\">`;\n  for (const e of excluded) html += `<li>${esc(e.title)} — ${esc(e.reason)}</li>`;\n  html += `</ul></details>`;\n}\nhtml += `<p style=\"font-size:11px;color:#9ca3af;margin-top:20px\">신뢰도 상: 공식 발표·주요 언론, 수치 출처 명확 / 중: 언론·벤더 사례, 고객사 실명 / 하: 벤더 단독 발표 등 독립 검증 어려움. 성과 수치는 원문 기재분만 표기하며 추정치는 '추정'으로 표시.</p></div>`;\n\nconst subject = `[AI 도입 사례 주간] ${period.from} ~ ${period.to} · 신규 ${cases.length}건`;\nreturn [{ json: { subject, html, rows, caseCount: cases.length, excludedCount: excluded.length } }];\n"
+      }
+    },
+    {
+      "id": "n11",
+      "name": "Split Rows",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        100
+      ],
+      "parameters": {
+        "jsCode": "// 시트에 한 행씩 추가하도록 사례를 item 단위로 펼친다(0건이면 아무것도 추가하지 않음).\nreturn $input.first().json.rows.map((r) => ({ json: r }));\n"
+      }
+    },
+    {
+      "id": "n12",
+      "name": "Append to DB",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        2200,
+        100
+      ],
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('Config').first().json.sheetId }}"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "={{ $('Config').first().json.sheetName }}"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "n13",
+      "name": "Send Weekly Report",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1980,
+        300
+      ],
+      "parameters": {
+        "sendTo": "={{ $('Config').first().json.recipient }}",
+        "subject": "={{ $json.subject }}",
+        "emailType": "html",
+        "message": "={{ $json.html }}",
+        "options": {
+          "appendAttribution": false
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Weekly Schedule (Mon 08:47 KST)": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual Test Run": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Read Existing DB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Existing DB": {
+      "main": [
+        [
+          {
+            "node": "Build Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Request": {
+      "main": [
+        [
+          {
+            "node": "Request State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Request State": {
+      "main": [
+        [
+          {
+            "node": "Claude Research (web search)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Research (web search)": {
+      "main": [
+        [
+          {
+            "node": "Check Continuation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Continuation": {
+      "main": [
+        [
+          {
+            "node": "Needs Continuation?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs Continuation?": {
+      "main": [
+        [
+          {
+            "node": "Request State",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Parse & Build Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse & Build Report": {
+      "main": [
+        [
+          {
+            "node": "Split Rows",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Send Weekly Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Rows": {
+      "main": [
+        [
+          {
+            "node": "Append to DB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Seoul"
+  },
+  "active": false
+}
